@@ -21,6 +21,7 @@ from pdm.utils import (
 
 if TYPE_CHECKING:
     from pdm.project import Project
+    from pdm.models.backends import BuildSystem
 
 
 class Command(BaseCommand):
@@ -146,13 +147,21 @@ class Command(BaseCommand):
     def get_metadata_from_input(self, project: Project, options: argparse.Namespace) -> dict[str, Any]:
         from pdm.formats.base import array_of_inline_tables, make_array, make_inline_table
 
-        if options.name:
-            if not validate_project_name(options.name):
-                raise ProjectError("Project name is not valid, it should follow PEP 426")
-            name = options.name
+        meta_data: dict = project.pyproject._data
+        if "project" in meta_data:
+            prj_info = cast(dict, meta_data["project"])
+            name = prj_info["name"]
+            version = prj_info.get("version", None)
+            if version is None:
+                version = self.ask("Project version", options.project_version or "0.1.0")
         else:
-            name = self.ask_project(project)
-        version = self.ask("Project version", options.project_version or "0.1.0")
+            if options.name:
+                if not validate_project_name(options.name):
+                    raise ProjectError("Project name is not valid, it should follow PEP 426")
+                name = options.name
+            else:
+                name = self.ask_project(project)
+            version = self.ask("Project version", options.project_version or "0.1.0")
         is_dist = options.dist or bool(options.backend)
         if not is_dist and self.interactive:
             is_dist = termui.confirm(
@@ -161,11 +170,14 @@ class Command(BaseCommand):
             )
         options.dist = is_dist
         build_backend: type[BuildBackend] | None = None
+        build_system: BuildSystem | None = None
         python = project.python
         if is_dist:
             description = self.ask("Project description", "")
             if options.backend:
                 build_backend = get_backend(options.backend)
+            elif "build-system" in meta_data.keys():
+                build_system = cast(BuildSystem, meta_data["build-system"])
             elif self.interactive:
                 all_backends = list(_BACKENDS)
                 project.core.ui.echo("Which build backend to use?")
@@ -209,7 +221,9 @@ class Command(BaseCommand):
         if description:
             data["project"]["description"] = description  # type: ignore[index]
         if build_backend is not None:
-            data["build-system"] = cast(dict, build_backend.build_system())
+            build_system = build_backend.build_system()
+        if build_system is not None:
+            data["build-system"] = cast(dict, build_system)
 
         return data
 
