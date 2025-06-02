@@ -148,12 +148,22 @@ class Command(BaseCommand):
         from pdm.formats.base import array_of_inline_tables, make_array, make_inline_table
 
         meta_data: dict = project.pyproject._data
+        description: str | None = None
+        requires_python: str | None = None
+        authors: list[dict[str, str]] | None = None
+        license: str | None = None
         if "project" in meta_data:
             prj_info = cast(dict, meta_data["project"])
             name = prj_info["name"]
-            version = prj_info.get("version", None)
+            version = cast(str | None, prj_info.get("version", None))
             if version is None:
                 version = self.ask("Project version", options.project_version or "0.1.0")
+            description = prj_info.get("description")
+            requires_python = prj_info.get("requires-python")
+            authors = cast(list[dict[str, str]] | None, prj_info.get("authors"))
+            license_dict = cast(dict[str, str] | None, prj_info.get("license"))
+            if license_dict is not None:
+                license = cast(str, license_dict["text"])
         else:
             if options.name:
                 if not validate_project_name(options.name):
@@ -172,12 +182,14 @@ class Command(BaseCommand):
         build_backend: type[BuildBackend] | None = None
         build_system: BuildSystem | None = None
         python = project.python
-        if is_dist:
+
+        if description is None:
             description = self.ask("Project description", "")
+        if is_dist:
             if options.backend:
                 build_backend = get_backend(options.backend)
             elif "build-system" in meta_data.keys():
-                build_system = cast(BuildSystem, meta_data["build-system"])
+                build_system = cast("BuildSystem", meta_data["build-system"])
             elif self.interactive:
                 all_backends = list(_BACKENDS)
                 project.core.ui.echo("Which build backend to use?")
@@ -193,22 +205,27 @@ class Command(BaseCommand):
                 build_backend = get_backend(all_backends[int(selected_backend)])
             else:
                 build_backend = DEFAULT_BACKEND
+
             default_python_requires = f">={python.major}.{python.minor}"
         else:
-            description = ""
             default_python_requires = f"=={python.major}.{python.minor}.*"
-        license = self.ask("License(SPDX name)", options.license or "MIT")
-
-        git_user, git_email = get_user_email_from_git()
-        author = self.ask("Author name", git_user)
-        email = self.ask("Author email", git_email)
-        python_requires = self.ask("Python requires('*' to allow any)", default_python_requires)
+        if license is None:
+            license = self.ask("License(SPDX name)", options.license or "MIT")
+        if authors is None:
+            git_user, git_email = get_user_email_from_git()
+            author = self.ask("Author name", git_user)
+            email = self.ask("Author email", git_email)
+            authors = array_of_inline_tables([{"name": author, "email": email}])
+        if requires_python is None:
+            python_requires = self.ask("Python requires('*' to allow any)", default_python_requires)
+        else:
+            python_requires = requires_python
 
         data = {
             "project": {
                 "name": name,
                 "version": version,
-                "authors": array_of_inline_tables([{"name": author, "email": email}]),
+                "authors": authors,
                 "license": make_inline_table({"text": license}),
                 "dependencies": make_array([], True),
             },
